@@ -16,10 +16,10 @@ else
   LAYERS=( configs/global_hyper.toml )
 fi
 
-mkdir -p configs results/logs results/summaries run_env/benchmarks/dimacs run_env/anchor/examples
+mkdir -p configs results/logs results/summaries run_env/anchor/examples/benchmarks/dimacs
 
 # Ensure dataset at the expected relative path for the example binary
-cp -f data/benchmarks/dimacs/DSJC1000.5.col run_env/benchmarks/dimacs/DSJC1000.5.col
+cp -f data/benchmarks/dimacs/DSJC1000.5.col run_env/anchor/examples/benchmarks/dimacs/DSJC1000.5.col
 
 tools/toml_layered_merge.sh "$BASE" "$OUT" "${LAYERS[@]}"
 
