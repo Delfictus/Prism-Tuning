@@ -4,14 +4,34 @@
 
 Minimal harness for tuning PRISM's DSJC1000.5 pipeline. Includes the PRISM binary (`bin/world_record_dsjc1000`), dataset (`data/benchmarks/dimacs/DSJC1000.5.col`), layered TOML overrides, run scripts, summarizer, and advisor.
 
+**NEW: Interactive CLI Dashboard** for easy parameter tuning, experiment creation, and job management!
+
 ## Requirements
 
 - Linux x86_64; for GPU: NVIDIA driver + CUDA runtime compatible with the bundled binary
 - `toml-cli`: `cargo install toml-cli`
 - Python 3.8+
 - ripgrep (`rg`)
+- `rich` library: `pip3 install --user rich` (auto-installed by CLI)
 
 ## Quick Start
+
+### Option 1: Interactive CLI (Recommended)
+
+```bash
+./prism
+```
+
+**Features:**
+- 🎨 Interactive parameter editor with validation
+- 🧪 Experiment creator and manager
+- 🚀 Launch jobs in separate windows (CLI stays responsive!)
+- 📊 View running jobs and logs
+- 🔧 Quick single-parameter adjustments
+
+See [CLI_GUIDE.md](CLI_GUIDE.md) for full documentation.
+
+### Option 2: Command Line
 
 1. **Verify binary:**
    ```bash

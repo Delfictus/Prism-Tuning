@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# PRISM CLI Launcher
+
+# Check for rich library
+if ! python3 -c "import rich" 2>/dev/null; then
+    echo "Installing required dependency: rich..."
+    pip3 install --user rich
+fi
+
+# Launch CLI
+cd "$(dirname "$0")"
+python3 tools/prism_cli.py "$@"

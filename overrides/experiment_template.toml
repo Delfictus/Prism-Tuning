@@ -1,0 +1,83 @@
+# Experiment Template - Copy and modify this for your experiments
+#
+# TOML Syntax Rules:
+# - Strings: Use quotes → "text"
+# - Numbers: No quotes → 123 or 45.6
+# - Booleans: No quotes → true or false
+#
+# Uncomment the parameters you want to override
+
+# ========== Top-Level Settings ==========
+# target_chromatic = 88              # Target colors (integer, no quotes)
+# max_runtime_hours = 48.0           # Runtime limit (float, no quotes)
+# deterministic = false              # Reproducible run (boolean, no quotes)
+# seed = 9001                        # Random seed (integer)
+
+# ========== CPU Configuration ==========
+[cpu]
+# threads = 24                       # CPU threads (integer)
+
+# ========== GPU Configuration ==========
+[gpu]
+# device_id = 0                      # Which GPU to use (0, 1, 2...)
+# streams = 4                        # Concurrent CUDA streams (1, 2, 4, 8)
+# batch_size = 2048                  # Items per kernel launch (256, 512, 1024, 2048, 4096)
+
+# ========== ADP Q-Learning ==========
+[adp]
+# epsilon = 1.0                      # Initial exploration rate (float 0.0-1.0)
+# epsilon_decay = 0.995              # Decay per episode (float 0.9-0.999)
+# epsilon_min = 0.03                 # Minimum exploration (float 0.01-0.1)
+# alpha = 0.1                        # Learning rate (float 0.01-0.5)
+# gamma = 0.95                       # Discount factor (float 0.8-0.99)
+
+# ========== Thermodynamic Annealing ==========
+[thermo]
+# replicas = 48                      # Parallel replicas (integer, max 56 for 8GB VRAM)
+# num_temps = 48                     # Temperature levels (integer, max 56 for 8GB VRAM)
+# steps_per_temp = 5000              # Steps per temperature (integer, higher=slower+better)
+# t_min = 0.001                      # Minimum temperature (float, very small)
+# t_max = 10.0                       # Maximum temperature (float, higher=more exploration)
+
+# ========== Quantum-Classical Hybrid ==========
+[quantum]
+# iterations = 30                    # Quantum iterations (integer)
+# failure_retries = 2                # Retry attempts (integer)
+# fallback_on_failure = true         # Fall back to CPU on GPU failure (boolean)
+# target_chromatic = 83              # Target for quantum phase (integer)
+
+# ========== Memetic Algorithm ==========
+[memetic]
+# population_size = 256              # Population size (integer, powers of 2 work well)
+# elite_size = 8                     # Elite preserved (integer)
+# generations = 900                  # Number of generations (integer)
+# mutation_rate = 0.05               # Mutation probability (float 0.01-0.2)
+# tournament_size = 3                # Tournament selection size (integer 2-5)
+# local_search_depth = 10000         # DSATUR depth per individual (integer)
+# use_tsp_guidance = false           # Use TSP heuristic (boolean)
+# tsp_weight = 0.0                   # TSP weight if enabled (float 0.0-1.0)
+
+# ========== Transfer Entropy & Kuramoto ==========
+[transfer_entropy]
+# geodesic_weight = 0.2              # Geodesic feature weight (float 0.0-1.0)
+# te_vs_kuramoto_weight = 0.7        # TE vs Kuramoto blend (float 0.0-1.0, 0.7 = 70% TE)
+
+# ========== Orchestrator & ADP Thresholds ==========
+[orchestrator]
+# adp_dsatur_depth = 50000           # DSATUR search depth (integer)
+# dsatur_target_offset = 3           # Colors above target before phase switch (integer)
+# adp_min_history_for_thermo = 2    # Min history for thermo trigger (integer)
+# adp_min_history_for_quantum = 5   # Min history for quantum trigger (integer)
+# adp_min_history_for_loopback = 3  # Min history for loopback (integer)
+# restarts = 10                      # Memetic restarts (integer)
+
+# ========== Neuromorphic Reservoir ==========
+[neuromorphic]
+# phase_threshold = 0.5              # Difficulty zone threshold in radians (float 0.0-3.14)
+
+# ========== Geodesic Features ==========
+[geodesic]
+# num_landmarks = 16                 # Number of landmarks (integer)
+# metric = "hop"                     # Distance metric (string: "hop" or "shortest")
+# centrality_weight = 0.5            # Centrality importance (float 0.0-1.0)
+# eccentricity_weight = 0.5          # Eccentricity importance (float 0.0-1.0)

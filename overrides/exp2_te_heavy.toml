@@ -1,0 +1,9 @@
+# Experiment 2: Transfer Entropy Heavy
+# Strategy: Rely more on transfer entropy for vertex ordering
+
+[transfer_entropy]
+te_vs_kuramoto_weight = 0.9        # 90% TE, 10% Kuramoto
+geodesic_weight = 0.3              # More geodesic influence
+
+[neuromorphic]
+phase_threshold = 0.3              # Lower threshold for difficulty zones

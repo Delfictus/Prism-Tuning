@@ -1,0 +1,9 @@
+# Experiment 5: Reproducible Run
+# Strategy: Fixed seed for comparing different configs fairly
+
+deterministic = true
+seed = 42                          # Fixed seed for reproducibility
+
+[adp]
+epsilon_decay = 0.995              # Standard decay
+epsilon_min = 0.03                 # Standard minimum

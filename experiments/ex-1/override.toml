@@ -1,0 +1,82 @@
+# Experiment 1: ultra-aggressive sweep
+target_chromatic = 88
+max_runtime_hours = 96.0
+seed = 13337
+
+[cpu]
+pin_pool = true
+
+[gpu]
+streams = 4
+batch_size = 4096
+
+[gpu_coloring]
+prefer_sparse = true
+sparse_density_threshold = 0.25
+
+[orchestrator]
+restarts = 25
+early_stop_no_improve_iters = 3
+checkpoint_minutes = 10
+adp_dsatur_depth = 120000
+adp_quantum_iterations = 60
+adp_thermo_num_temps = 56
+dsatur_target_offset = 1
+adp_min_history_for_thermo = 6
+adp_min_history_for_quantum = 10
+adp_min_history_for_loopback = 6
+
+[neuromorphic]
+reservoir_size = 2048
+spectral_radius = 0.95
+leak_rate = 0.2
+input_scaling = 0.8
+phase_threshold = 0.35
+
+[dsatur]
+geodesic_weight = 0.45
+reservoir_weight = 0.25
+ai_weight = 0.30
+
+[quantum]
+iterations = 60
+depth = 9
+attempts = 768
+beta = 0.95
+temperature = 0.6
+failure_retries = 4
+
+[memetic]
+population_size = 768
+elite_size = 24
+generations = 2000
+crossover_rate = 0.8
+mutation_rate = 0.1
+tournament_size = 5
+local_search_depth = 20000
+use_tsp_guidance = true
+tsp_weight = 0.18
+
+[thermo]
+replicas = 56
+num_temps = 56
+steps_per_temp = 20000
+temperature_max = 25.0
+temperature_min = 0.0001
+
+[pimc]
+replicas = 56
+beads = 64
+steps = 40000
+tau = 0.008
+
+[adp]
+epsilon_decay = 0.990
+epsilon_min = 0.05
+alpha = 0.22
+gamma = 0.98
+replay_buffer_size = 4000
+
+[transfer_entropy]
+geodesic_weight = 0.40
+te_vs_kuramoto_weight = 0.85

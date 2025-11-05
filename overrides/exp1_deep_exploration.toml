@@ -1,0 +1,13 @@
+# Experiment 1: Deep Exploration
+# Strategy: More thorough search with slower decay and deeper thermodynamic
+
+[adp]
+epsilon_decay = 0.997              # Slower exploration decay
+epsilon_min = 0.05                 # More minimum exploration
+
+[thermo]
+steps_per_temp = 10000             # Double thermodynamic steps
+num_temps = 64                     # More temperature levels (VRAM safe)
+
+[orchestrator]
+adp_min_history_for_thermo = 3     # More history before thermo trigger

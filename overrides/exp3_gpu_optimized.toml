@@ -1,0 +1,10 @@
+# Experiment 3: GPU Optimized
+# Strategy: Better GPU utilization with larger batches and more streams
+
+[gpu]
+streams = 4                        # More concurrent GPU streams
+batch_size = 2048                  # Larger batches (better GPU occupancy)
+
+[thermo]
+replicas = 56                      # Max safe replicas for 8GB VRAM
+num_temps = 56                     # Max safe temperatures

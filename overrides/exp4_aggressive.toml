@@ -1,0 +1,17 @@
+# Experiment 4: Aggressive Search
+# Strategy: Push all limits - longer runtime, more iterations, deeper search
+
+target_chromatic = 85              # Slightly higher target
+max_runtime_hours = 72.0           # Longer runtime (3 days)
+
+[quantum]
+iterations = 50                    # More quantum iterations
+
+[memetic]
+generations = 1500                 # More generations
+population_size = 512              # Larger population
+local_search_depth = 20000         # Deeper local search
+
+[orchestrator]
+restarts = 20                      # More restarts
+adp_dsatur_depth = 100000          # Deeper DSATUR search
