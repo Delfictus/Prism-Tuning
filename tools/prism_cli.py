@@ -6,16 +6,25 @@ import os
 import sys
 import json
 import subprocess
-import glob
+import copy
 from pathlib import Path
 from datetime import datetime
+
+try:
+    import tomllib  # Python 3.11+
+except ImportError:  # pragma: no cover - fallback when tomllib missing
+    tomllib = None
+
+try:
+    import toml as toml_module  # External library fallback for older Python
+except ImportError:  # pragma: no cover - handled gracefully at runtime
+    toml_module = None
 
 try:
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
-    from rich.prompt import Prompt, Confirm, IntPrompt, FloatPrompt
-    from rich.layout import Layout
+    from rich.prompt import Prompt, Confirm
     from rich import box
 except ImportError:
     print("Error: 'rich' library required. Install with: pip3 install rich")
@@ -37,71 +46,297 @@ SUMMARIES_DIR = REPO_ROOT / "results/summaries"
 # Parameter definitions with types and defaults
 TUNABLE_PARAMS = {
     "Top-Level": {
-        "target_chromatic": {"type": "int", "default": 83, "desc": "Target colors to achieve"},
-        "max_runtime_hours": {"type": "float", "default": 48.0, "desc": "Maximum runtime in hours"},
-        "deterministic": {"type": "bool", "default": False, "desc": "Reproducible run with fixed seed"},
-        "seed": {"type": "int", "default": 9001, "desc": "Random seed"},
-        "use_tda": {"type": "bool", "default": True, "desc": "Enable Topological Data Analysis"},
-        "use_pimc": {"type": "bool", "default": False, "desc": "Enable Path Integral Monte Carlo (slow)"},
+        "target_chromatic": {
+            "type": "int",
+            "default": 83,
+            "desc": "Target colors to achieve",
+            "hint": "Raises the target; e.g. 85 pushes closer to WR attempts.",
+        },
+        "max_runtime_hours": {
+            "type": "float",
+            "default": 48.0,
+            "desc": "Maximum runtime in hours",
+            "hint": "Longer runs search deeper; 72.0 keeps the solver busy for three days.",
+        },
+        "deterministic": {
+            "type": "bool",
+            "default": False,
+            "desc": "Reproducible run with fixed seed",
+            "hint": "Enable for repeatable traces when comparing logs with teammates.",
+        },
+        "seed": {
+            "type": "int",
+            "default": 9001,
+            "desc": "Random seed",
+            "hint": "Controls the RNG sequence; 1337 explores a different path.",
+        },
+        "use_tda": {
+            "type": "bool",
+            "default": True,
+            "desc": "Enable Topological Data Analysis",
+            "hint": "Toggle TDA heuristics; disable if you need to save a bit of VRAM.",
+        },
+        "use_pimc": {
+            "type": "bool",
+            "default": False,
+            "desc": "Enable Path Integral Monte Carlo (slow)",
+            "hint": "Activates PIMC annealing; expect slower runs but deeper exploration.",
+        },
     },
     "CPU": {
-        "threads": {"type": "int", "default": 24, "desc": "Number of CPU threads"},
+        "threads": {
+            "type": "int",
+            "default": 24,
+            "desc": "Number of CPU threads",
+            "hint": "Cap worker threads; set 32 on a 32-core host to saturate the CPU.",
+        },
     },
     "GPU": {
-        "device_id": {"type": "int", "default": 0, "desc": "GPU device ID (0, 1, 2...)"},
-        "streams": {"type": "int", "default": 1, "desc": "Concurrent CUDA streams"},
-        "batch_size": {"type": "int", "default": 1024, "desc": "Batch size for GPU kernels"},
+        "device_id": {
+            "type": "int",
+            "default": 0,
+            "desc": "GPU device ID (0, 1, 2...)",
+            "hint": "Choose the GPU index; e.g. 1 binds to your second card.",
+        },
+        "streams": {
+            "type": "int",
+            "default": 1,
+            "desc": "Concurrent CUDA streams",
+            "hint": "Higher streams overlap kernels; 4 keeps modern GPUs busier.",
+        },
+        "batch_size": {
+            "type": "int",
+            "default": 1024,
+            "desc": "Batch size for GPU kernels",
+            "hint": "Larger batches raise occupancy; 4096 suits 24GB+ cards.",
+        },
     },
     "ADP": {
-        "epsilon": {"type": "float", "default": 1.0, "desc": "Initial exploration rate"},
-        "epsilon_decay": {"type": "float", "default": 0.995, "desc": "Exploration decay per episode"},
-        "epsilon_min": {"type": "float", "default": 0.03, "desc": "Minimum exploration rate"},
-        "alpha": {"type": "float", "default": 0.1, "desc": "Learning rate"},
-        "gamma": {"type": "float", "default": 0.95, "desc": "Discount factor"},
+        "epsilon": {
+            "type": "float",
+            "default": 1.0,
+            "desc": "Initial exploration rate",
+            "hint": "Starting exploration rate; drop to 0.5 to exploit sooner.",
+        },
+        "epsilon_decay": {
+            "type": "float",
+            "default": 0.995,
+            "desc": "Exploration decay per episode",
+            "hint": "Closer to 1.0 delays exploitation; 0.999 helps break plateaus.",
+        },
+        "epsilon_min": {
+            "type": "float",
+            "default": 0.03,
+            "desc": "Minimum exploration rate",
+            "hint": "Floor on exploration; 0.1 keeps trying new moves late in a run.",
+        },
+        "alpha": {
+            "type": "float",
+            "default": 0.1,
+            "desc": "Learning rate",
+            "hint": "Update rate; 0.05 slows learning when rewards are noisy.",
+        },
+        "gamma": {
+            "type": "float",
+            "default": 0.95,
+            "desc": "Discount factor",
+            "hint": "Reward discount; 0.99 emphasises long-term payoffs.",
+        },
     },
     "Thermodynamic": {
-        "replicas": {"type": "int", "default": 48, "desc": "Parallel replicas (max 56 for 8GB VRAM)"},
-        "num_temps": {"type": "int", "default": 48, "desc": "Temperature levels (max 56 for 8GB VRAM)"},
-        "steps_per_temp": {"type": "int", "default": 5000, "desc": "Steps per temperature"},
-        "t_min": {"type": "float", "default": 0.001, "desc": "Minimum temperature"},
-        "t_max": {"type": "float", "default": 10.0, "desc": "Maximum temperature"},
+        "replicas": {
+            "type": "int",
+            "default": 48,
+            "desc": "Parallel replicas (max 56 for 8GB VRAM)",
+            "hint": "More replicas smooth swaps; 56 is the safe max for 8GB cards.",
+        },
+        "num_temps": {
+            "type": "int",
+            "default": 48,
+            "desc": "Temperature levels (max 56 for 8GB VRAM)",
+            "hint": "Match replicas (e.g. 56) for a balanced temperature ladder.",
+        },
+        "steps_per_temp": {
+            "type": "int",
+            "default": 5000,
+            "desc": "Steps per temperature",
+            "hint": "Extra steps per level stabilise the phase; 20000 helps on stubborn graphs.",
+        },
+        "t_min": {
+            "type": "float",
+            "default": 0.001,
+            "desc": "Minimum temperature",
+            "hint": "Lowest temperature; 0.0005 tightens the endgame search.",
+        },
+        "t_max": {
+            "type": "float",
+            "default": 10.0,
+            "desc": "Maximum temperature",
+            "hint": "Highest temperature; 20.0 boosts exploration when stuck.",
+        },
     },
     "Quantum": {
-        "iterations": {"type": "int", "default": 30, "desc": "Quantum-classical iterations"},
-        "failure_retries": {"type": "int", "default": 2, "desc": "Retry attempts on failure"},
-        "fallback_on_failure": {"type": "bool", "default": True, "desc": "Fallback to CPU on GPU failure"},
-        "target_chromatic": {"type": "int", "default": 83, "desc": "Target for quantum phase"},
+        "iterations": {
+            "type": "int",
+            "default": 30,
+            "desc": "Quantum-classical iterations",
+            "hint": "More hybrid loops deepen search; 50 suits aggressive runs.",
+        },
+        "failure_retries": {
+            "type": "int",
+            "default": 2,
+            "desc": "Retry attempts on failure",
+            "hint": "Extra retries rebuild failing schedules; 4 offers more resilience.",
+        },
+        "fallback_on_failure": {
+            "type": "bool",
+            "default": True,
+            "desc": "Fallback to CPU on GPU failure",
+            "hint": "Keep true for reliability; disable only while debugging GPU issues.",
+        },
+        "target_chromatic": {
+            "type": "int",
+            "default": 83,
+            "desc": "Target for quantum phase",
+            "hint": "Quantum target; set 84 to aim above the classical goal.",
+        },
     },
     "Memetic": {
-        "population_size": {"type": "int", "default": 256, "desc": "Population size"},
-        "elite_size": {"type": "int", "default": 8, "desc": "Elite individuals preserved"},
-        "generations": {"type": "int", "default": 900, "desc": "Number of generations"},
-        "mutation_rate": {"type": "float", "default": 0.05, "desc": "Mutation probability"},
-        "tournament_size": {"type": "int", "default": 3, "desc": "Tournament selection size"},
-        "local_search_depth": {"type": "int", "default": 10000, "desc": "DSATUR depth per individual"},
-        "use_tsp_guidance": {"type": "bool", "default": False, "desc": "Use TSP heuristic"},
-        "tsp_weight": {"type": "float", "default": 0.0, "desc": "TSP weight (if enabled)"},
+        "population_size": {
+            "type": "int",
+            "default": 256,
+            "desc": "Population size",
+            "hint": "Larger populations widen coverage; 512 doubles diversity.",
+        },
+        "elite_size": {
+            "type": "int",
+            "default": 8,
+            "desc": "Elite individuals preserved",
+            "hint": "Elites carried forward; 16 preserves more top candidates.",
+        },
+        "generations": {
+            "type": "int",
+            "default": 900,
+            "desc": "Number of generations",
+            "hint": "More generations extend evolution; 2000 for marathon sweeps.",
+        },
+        "mutation_rate": {
+            "type": "float",
+            "default": 0.05,
+            "desc": "Mutation probability",
+            "hint": "Higher mutation injects diversity; 0.1 shakes stagnation loose.",
+        },
+        "tournament_size": {
+            "type": "int",
+            "default": 3,
+            "desc": "Tournament selection size",
+            "hint": "Larger tournaments increase pressure; 5 strongly favours elites.",
+        },
+        "local_search_depth": {
+            "type": "int",
+            "default": 10000,
+            "desc": "DSATUR depth per individual",
+            "hint": "Deepens per-individual DSATUR search; 20000 digs harder before handoff.",
+        },
+        "use_tsp_guidance": {
+            "type": "bool",
+            "default": False,
+            "desc": "Use TSP heuristic",
+            "hint": "Enable to bias by TSP paths; helpful on geometric instances.",
+        },
+        "tsp_weight": {
+            "type": "float",
+            "default": 0.0,
+            "desc": "TSP weight (if enabled)",
+            "hint": "Heuristic weight; 0.3 mixes in TSP guidance when enabled.",
+        },
     },
     "Transfer Entropy": {
-        "geodesic_weight": {"type": "float", "default": 0.2, "desc": "Geodesic feature weight"},
-        "te_vs_kuramoto_weight": {"type": "float", "default": 0.7, "desc": "TE vs Kuramoto blend (0.7=70% TE)"},
+        "geodesic_weight": {
+            "type": "float",
+            "default": 0.2,
+            "desc": "Geodesic feature weight",
+            "hint": "Higher weight emphasises graph distance; 0.3 balances signals.",
+        },
+        "te_vs_kuramoto_weight": {
+            "type": "float",
+            "default": 0.7,
+            "desc": "TE vs Kuramoto blend (0.7=70% TE)",
+            "hint": "Closer to 1 leans on TE; 0.95 suits plateau-breaking recipes.",
+        },
     },
     "Orchestrator": {
-        "adp_dsatur_depth": {"type": "int", "default": 50000, "desc": "DSATUR search depth"},
-        "dsatur_target_offset": {"type": "int", "default": 3, "desc": "Colors above target before phase switch"},
-        "adp_min_history_for_thermo": {"type": "int", "default": 2, "desc": "Min history for thermo trigger"},
-        "adp_min_history_for_quantum": {"type": "int", "default": 5, "desc": "Min history for quantum trigger"},
-        "adp_min_history_for_loopback": {"type": "int", "default": 3, "desc": "Min history for loopback"},
-        "restarts": {"type": "int", "default": 10, "desc": "Memetic restarts"},
+        "adp_dsatur_depth": {
+            "type": "int",
+            "default": 50000,
+            "desc": "DSATUR search depth",
+            "hint": "Higher depth extends DSATUR lookahead; 100000 for aggressive scans.",
+        },
+        "dsatur_target_offset": {
+            "type": "int",
+            "default": 3,
+            "desc": "Colors above target before phase switch",
+            "hint": "Lower offset triggers phase switches sooner; 2 flips earlier.",
+        },
+        "adp_min_history_for_thermo": {
+            "type": "int",
+            "default": 2,
+            "desc": "Min history for thermo trigger",
+            "hint": "Smaller history fires thermo faster; 1 starts almost immediately.",
+        },
+        "adp_min_history_for_quantum": {
+            "type": "int",
+            "default": 5,
+            "desc": "Min history for quantum trigger",
+            "hint": "Lower value engages quantum sooner; 2 is quite aggressive.",
+        },
+        "adp_min_history_for_loopback": {
+            "type": "int",
+            "default": 3,
+            "desc": "Min history for loopback",
+            "hint": "Controls full reset cadence; 4 recycles phases sooner.",
+        },
+        "restarts": {
+            "type": "int",
+            "default": 10,
+            "desc": "Memetic restarts",
+            "hint": "More restarts diversify search; 20 for wide exploration.",
+        },
     },
     "Neuromorphic": {
-        "phase_threshold": {"type": "float", "default": 0.5, "desc": "Difficulty zone threshold (radians)"},
+        "phase_threshold": {
+            "type": "float",
+            "default": 0.5,
+            "desc": "Difficulty zone threshold (radians)",
+            "hint": "Lower threshold engages neuromorphic helpers more often; 0.4 catches spikes.",
+        },
     },
     "Geodesic": {
-        "num_landmarks": {"type": "int", "default": 16, "desc": "Number of landmark vertices"},
-        "metric": {"type": "choice", "choices": ["hop", "shortest"], "default": "hop", "desc": "Distance metric"},
-        "centrality_weight": {"type": "float", "default": 0.5, "desc": "Centrality importance"},
-        "eccentricity_weight": {"type": "float", "default": 0.5, "desc": "Eccentricity importance"},
+        "num_landmarks": {
+            "type": "int",
+            "default": 16,
+            "desc": "Number of landmark vertices",
+            "hint": "More landmarks sharpen embeddings; 32 for huge graphs.",
+        },
+        "metric": {
+            "type": "choice",
+            "choices": ["hop", "shortest"],
+            "default": "hop",
+            "desc": "Distance metric",
+            "hint": "Switch to 'shortest' for exact distances; 'hop' is faster on large instances.",
+        },
+        "centrality_weight": {
+            "type": "float",
+            "default": 0.5,
+            "desc": "Centrality importance",
+            "hint": "Higher weight favours central nodes; 0.7 spotlights hubs.",
+        },
+        "eccentricity_weight": {
+            "type": "float",
+            "default": 0.5,
+            "desc": "Eccentricity importance",
+            "hint": "Higher weight favours fringe nodes; 0.7 probes the periphery.",
+        },
     },
 }
 
@@ -119,6 +354,219 @@ SECTION_MAP = {
     "Neuromorphic": "neuromorphic",
     "Geodesic": "geodesic",
 }
+
+
+SECTION_PARAM_ORDER = {}
+PARAM_LOOKUP = {}
+for category, params in TUNABLE_PARAMS.items():
+    section = SECTION_MAP[category]
+    order = SECTION_PARAM_ORDER.setdefault(section, [])
+    for param_name, info in params.items():
+        if param_name not in order:
+            order.append(param_name)
+        PARAM_LOOKUP[(section, param_name)] = info
+
+
+def _load_toml(path: Path) -> dict:
+    """Load TOML data from path with available parser."""
+    if not path.exists():
+        return {}
+
+    if tomllib is not None:
+        with open(path, "rb") as handle:
+            return tomllib.load(handle)
+
+    if toml_module is not None:
+        with open(path, "r", encoding="utf-8") as handle:
+            return toml_module.load(handle)
+
+    raise RuntimeError("No TOML parser available. Install the 'toml' package.")
+
+
+def _deep_merge(base: dict, override: dict) -> None:
+    """Recursively merge override into base."""
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+
+
+def load_active_config() -> dict:
+    """Return the merged configuration (base + global overrides)."""
+    base_data = _load_toml(BASE_CONFIG)
+    global_data = _load_toml(GLOBAL_HYPER)
+
+    merged = copy.deepcopy(base_data)
+    _deep_merge(merged, global_data)
+    return merged
+
+
+def load_global_config() -> dict:
+    """Load the global overrides file."""
+    return copy.deepcopy(_load_toml(GLOBAL_HYPER))
+
+
+def _format_toml_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return f"{value}"
+    return json.dumps(value)
+
+
+def _iter_section_items(section: str, data: dict):
+    order = SECTION_PARAM_ORDER.get(section, [])
+    seen = set()
+    for key in order:
+        if key in data:
+            seen.add(key)
+            yield key, data[key]
+    for key in sorted(data.keys()):
+        if key not in seen:
+            yield key, data[key]
+
+
+def write_global_config(data: dict) -> None:
+    """Persist the global override configuration."""
+    GLOBAL_HYPER.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = [
+        "# PRISM CLI Managed Overrides",
+        f"# Last updated: {datetime.now().isoformat()}",
+        "",
+    ]
+
+    # Top-level entries
+    top_level = {k: v for k, v in data.items() if not isinstance(v, dict)}
+    seen_top = set()
+    for key in SECTION_PARAM_ORDER.get("", []):
+        if key in top_level:
+            lines.append(f"{key} = {_format_toml_value(top_level[key])}")
+            seen_top.add(key)
+    for key in sorted(top_level.keys()):
+        if key not in seen_top:
+            lines.append(f"{key} = {_format_toml_value(top_level[key])}")
+    if top_level:
+        lines.append("")
+
+    section_order = [sec for sec in SECTION_PARAM_ORDER.keys() if sec]
+    extra_sections = [sec for sec in data.keys() if isinstance(data[sec], dict) and sec not in section_order]
+    for sec in sorted(extra_sections):
+        section_order.append(sec)
+
+    for section in section_order:
+        section_data = data.get(section, {})
+        if not section_data:
+            continue
+        lines.append(f"[{section}]")
+        for key, value in _iter_section_items(section, section_data):
+            lines.append(f"{key} = {_format_toml_value(value)}")
+        lines.append("")
+
+    contents = "\n".join(lines).rstrip() + "\n"
+    with open(GLOBAL_HYPER, "w", encoding="utf-8") as handle:
+        handle.write(contents)
+
+
+def apply_config_changes(entries):
+    """Apply a sequence of section parameter updates to the global config."""
+    config = load_global_config()
+
+    for entry in entries:
+        section = entry["section"]
+        params = entry["params"]
+
+        if section:
+            section_dict = config.setdefault(section, {})
+            section_dict.update(params)
+        else:
+            config.update(params)
+
+    write_global_config(config)
+
+
+def get_current_value(active_config: dict, section: str, key: str, default):
+    if section:
+        return active_config.get(section, {}).get(key, default)
+    return active_config.get(key, default)
+
+
+BACK_SENTINEL = object()
+
+
+def _prompt_bool(label: str, current_value, default):
+    default_bool = current_value if isinstance(current_value, bool) else bool(default)
+    default_choice = "yes" if default_bool else "no"
+    response = Prompt.ask(
+        f"{label} (yes/no/back)",
+        choices=["yes", "no", "back"],
+        default=default_choice,
+    )
+    if response == "back":
+        return BACK_SENTINEL
+    return response == "yes"
+
+
+def _prompt_int(label: str, current_value, default):
+    default_val = current_value if isinstance(current_value, int) else int(default)
+    while True:
+        response = Prompt.ask(
+            f"{label} (type 'back' to return)",
+            default=str(default_val),
+        )
+        if response.strip().lower() == "back":
+            return BACK_SENTINEL
+        try:
+            return int(response)
+        except ValueError:
+            console.print("[red]Please enter an integer or 'back'.[/red]")
+
+
+def _prompt_float(label: str, current_value, default):
+    if isinstance(current_value, (int, float)):
+        default_val = float(current_value)
+    else:
+        default_val = float(default)
+    while True:
+        response = Prompt.ask(
+            f"{label} (type 'back' to return)",
+            default=str(default_val),
+        )
+        if response.strip().lower() == "back":
+            return BACK_SENTINEL
+        try:
+            return float(response)
+        except ValueError:
+            console.print("[red]Please enter a number or 'back'.[/red]")
+
+
+def _prompt_choice(label: str, choices, current_value, default):
+    default_choice = str(current_value) if str(current_value) in choices else str(default)
+    response = Prompt.ask(
+        f"{label} (type 'back' to return)",
+        choices=list(choices) + ["back"],
+        default=default_choice,
+    )
+    if response == "back":
+        return BACK_SENTINEL
+    return response
+
+
+def prompt_parameter_value(label: str, param_info: dict, current_value):
+    param_type = param_info["type"]
+    default = param_info["default"]
+
+    if param_type == "bool":
+        return _prompt_bool(label, current_value, default)
+    if param_type == "int":
+        return _prompt_int(label, current_value, default)
+    if param_type == "float":
+        return _prompt_float(label, current_value, default)
+    if param_type == "choice":
+        return _prompt_choice(label, param_info["choices"], current_value, default)
+
+    return current_value
 
 
 def clear_screen():
@@ -144,7 +592,7 @@ def main_menu():
     table.add_column("Option", style="cyan", width=4)
     table.add_column("Description", style="white")
 
-    table.add_row("1", "Configure Parameters")
+    table.add_row("1", "Edit Active Config")
     table.add_row("2", "Create New Experiment")
     table.add_row("3", "Run Experiment")
     table.add_row("4", "View Running Jobs")
@@ -160,29 +608,49 @@ def main_menu():
     return choice
 
 
-def configure_parameters():
-    """Interactive parameter configuration"""
-    clear_screen()
-    show_header()
+def configure_parameters(for_experiment: bool = False):
+    """Interactive parameter configuration."""
+    while True:
+        clear_screen()
+        show_header()
 
-    console.print("[bold]Select parameter category:[/bold]\n")
+        console.print("[bold]Select parameter category:[/bold]\n")
+        console.print("[dim]Type 'back' inside a category to return here without saving.[/dim]\n")
 
-    categories = list(TUNABLE_PARAMS.keys())
-    for i, cat in enumerate(categories, 1):
-        console.print(f"{i}. {cat}")
-    console.print("0. Back to main menu")
+        categories = list(TUNABLE_PARAMS.keys())
+        for i, cat in enumerate(categories, 1):
+            console.print(f"{i}. {cat}")
+        console.print("0. Back to main menu")
 
-    choice = Prompt.ask("\nCategory", choices=[str(i) for i in range(len(categories) + 1)])
+        choice = Prompt.ask("\nCategory", choices=[str(i) for i in range(len(categories) + 1)])
 
-    if choice == "0":
-        return None
+        if choice == "0":
+            return None
 
-    category = categories[int(choice) - 1]
-    return edit_category(category)
+        category = categories[int(choice) - 1]
+        active_config = load_active_config()
+        result = edit_category(category, active_config)
+
+        if result is None:
+            if for_experiment:
+                return None
+            continue
+
+        if for_experiment:
+            return result
+
+        apply_config_changes([result])
+        console.print("\n[green]✓ Updated configs/global_hyper.toml[/green]\n")
+
+        if not Confirm.ask("Edit another category", default=False):
+            break
+
+    if not for_experiment:
+        Prompt.ask("\nPress Enter to continue")
 
 
-def edit_category(category):
-    """Edit all parameters in a category"""
+def edit_category(category, active_config):
+    """Edit all parameters in a category."""
     params = TUNABLE_PARAMS[category]
     section = SECTION_MAP[category]
 
@@ -191,25 +659,23 @@ def edit_category(category):
     clear_screen()
     show_header()
     console.print(f"[bold cyan]Editing: {category}[/bold cyan]\n")
+    console.print("[dim]Type 'back' at any prompt to return without saving changes.[/dim]\n")
 
     for param_name, param_info in params.items():
-        param_type = param_info["type"]
-        default = param_info["default"]
         desc = param_info["desc"]
+        current_value = get_current_value(active_config, section, param_name, param_info["default"])
+        label = param_info.get("label", param_name.replace("_", " "))
 
-        console.print(f"[yellow]{param_name}[/yellow]: {desc}")
-        console.print(f"[dim]Default: {default}[/dim]")
+        console.print(f"[yellow]{label}[/yellow]: {desc}")
+        console.print(f"[dim]Current: {current_value}[/dim]")
+        hint = param_info.get("hint")
+        if hint:
+            console.print(f"[dim]Hint: {hint}[/dim]")
 
-        if param_type == "bool":
-            value = Confirm.ask(f"Enable {param_name}", default=default)
-        elif param_type == "int":
-            value = IntPrompt.ask(f"Value", default=default)
-        elif param_type == "float":
-            value = FloatPrompt.ask(f"Value", default=default)
-        elif param_type == "choice":
-            choices = param_info["choices"]
-            console.print(f"Choices: {', '.join(choices)}")
-            value = Prompt.ask(f"Value", choices=choices, default=default)
+        value = prompt_parameter_value(label, param_info, current_value)
+        if value is BACK_SENTINEL:
+            console.print("\n[yellow]Back pressed. No changes saved for this category.[/yellow]")
+            return None
 
         edited[param_name] = value
         console.print()
@@ -258,6 +724,15 @@ def save_to_toml(config_dict, output_file):
 
     console.print(f"[green]✓ Saved to {output_file}[/green]")
 
+    # Validate TOML syntax
+    validator = REPO_ROOT / "tools" / "validate_toml.sh"
+    if validator.exists():
+        result = subprocess.run([str(validator), str(output_file)], capture_output=True, text=True)
+        if result.returncode != 0:
+            console.print(f"[yellow]⚠ TOML validation warning:[/yellow]\n{result.stderr}")
+        else:
+            console.print("[dim]✓ TOML syntax validated[/dim]")
+
 
 def create_experiment():
     """Create a new experiment configuration"""
@@ -274,7 +749,7 @@ def create_experiment():
     config_data = []
 
     while True:
-        result = configure_parameters()
+        result = configure_parameters(for_experiment=True)
         if result is None:
             break
         config_data.append(result)
@@ -464,17 +939,24 @@ def quick_adjust():
     console.print("[bold]Quick Parameter Adjust[/bold]\n")
     console.print("[dim]Common adjustments for quick experiments[/dim]\n")
 
+    active_config = load_active_config()
     adjustments = [
-        ("Target chromatic number", "target_chromatic", "int", 83),
-        ("Runtime (hours)", "max_runtime_hours", "float", 48.0),
-        ("Thermodynamic steps per temp", "steps_per_temp", "int", 5000),
-        ("TE vs Kuramoto weight", "te_vs_kuramoto_weight", "float", 0.7),
-        ("ADP epsilon decay", "epsilon_decay", "float", 0.995),
-        ("GPU batch size", "batch_size", "int", 1024),
+        ("Target chromatic number", "", "target_chromatic"),
+        ("Runtime (hours)", "", "max_runtime_hours"),
+        ("Thermodynamic steps per temp", "thermo", "steps_per_temp"),
+        ("TE vs Kuramoto weight", "transfer_entropy", "te_vs_kuramoto_weight"),
+        ("ADP epsilon decay", "adp", "epsilon_decay"),
+        ("GPU batch size", "gpu", "batch_size"),
     ]
 
-    for i, (desc, _, _, default) in enumerate(adjustments, 1):
-        console.print(f"{i}. {desc} (default: {default})")
+    for i, (desc, section, param) in enumerate(adjustments, 1):
+        param_info = PARAM_LOOKUP.get((section, param), {})
+        default = param_info.get("default")
+        current_value = get_current_value(active_config, section, param, default)
+        console.print(f"{i}. {desc} (current: {current_value})")
+        hint = param_info.get("hint")
+        if hint:
+            console.print(f"   [dim]Hint: {hint}[/dim]")
     console.print("0. Cancel")
 
     choice = Prompt.ask("\nSelect parameter", choices=[str(i) for i in range(len(adjustments) + 1)])
@@ -482,24 +964,34 @@ def quick_adjust():
     if choice == "0":
         return
 
-    desc, param, ptype, default = adjustments[int(choice) - 1]
+    desc, section, param = adjustments[int(choice) - 1]
+    param_info = PARAM_LOOKUP.get((section, param))
+    if not param_info:
+        console.print("[red]Unable to locate parameter metadata.[/red]")
+        Prompt.ask("\nPress Enter to continue")
+        return
 
-    if ptype == "int":
-        value = IntPrompt.ask(f"New value for {param}", default=default)
-    else:
-        value = FloatPrompt.ask(f"New value for {param}", default=default)
+    current_value = get_current_value(active_config, section, param, param_info.get("default"))
+    label = param_info.get("label", param.replace("_", " "))
 
-    # Save to quick_adjust.toml
-    output = OVERRIDES_DIR / "quick_adjust.toml"
-    with open(output, 'w') as f:
-        f.write(f"# Quick adjustment: {desc}\n")
-        f.write(f"{param} = {value}\n")
+    console.print(f"\n[bold]{desc}[/bold]")
+    console.print(f"Current value: [cyan]{current_value}[/cyan]")
+    hint = param_info.get("hint")
+    if hint:
+        console.print(f"[dim]Hint: {hint}[/dim]")
 
-    console.print(f"\n[green]✓ Saved to {output}[/green]")
+    value = prompt_parameter_value(label, param_info, current_value)
+    if value is BACK_SENTINEL:
+        console.print("\n[yellow]Back pressed. No quick adjust applied.[/yellow]")
+        return
 
-    if Confirm.ask("\nRun experiment with this adjustment", default=True):
+    apply_config_changes([{"section": section, "params": {param: value}}])
+
+    console.print(f"\n[green]✓ Updated configs/global_hyper.toml ({param} = {value})[/green]")
+
+    if Confirm.ask("\nRun experiment with these settings", default=True):
         timeout = Prompt.ask("Timeout", default="90m")
-        cmd = f"cd {REPO_ROOT} && TIMEOUT={timeout} ./tools/run_wr_toml.sh {output}"
+        cmd = f"cd {REPO_ROOT} && TIMEOUT={timeout} ./tools/run_wr_toml.sh"
         launch_in_new_window(cmd, f"PRISM: Quick Adjust ({param}={value})")
         console.print("[green]✓ Launched in new window![/green]")
 
