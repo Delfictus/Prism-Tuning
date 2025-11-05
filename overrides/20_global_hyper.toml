@@ -1,0 +1,9 @@
+[adp]
+epsilon_decay = 0.997
+epsilon_min = 0.04
+
+[thermo]
+steps_per_temp = 8000
+
+[transfer_entropy]
+te_vs_kuramoto_weight = 0.8

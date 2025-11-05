@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+results/
+configs/wr_hyper_active.toml
+.DS_Store
+.idea/
+.vscode/
+*.swp
+target/
+Cargo.lock
+.env
+run_env/

@@ -1,0 +1,86 @@
+# Global hyper-tuning overrides (effective knobs only)
+# Only keys that exist in the base are applied by toml-cli merges.
+
+# Top-level toggles & targets
+# use_reservoir_prediction = true
+# use_active_inference = true
+# use_transfer_entropy = true
+# use_thermodynamic_equilibration = true
+# use_quantum_classical_hybrid = true
+# use_multiscale_analysis = true
+# use_ensemble_consensus = true
+# use_geodesic_features = true
+# use_tda = true
+# use_pimc = false
+# deterministic = false
+# seed = 9001
+# target_chromatic = 83
+# max_runtime_hours = 48.0
+
+[cpu]
+# threads = 24
+
+[gpu]
+# device_id = 0
+# streams = 1
+# batch_size = 1024
+# enable_reservoir_gpu = true
+# enable_te_gpu = true
+# enable_statmech_gpu = true
+# enable_quantum_gpu = true
+# enable_pimc_gpu = true   # harmless if use_pimc=false
+# enable_thermo_gpu = true
+# enable_tda_gpu = true
+
+[adp]
+# epsilon = 1.0
+# epsilon_decay = 0.995
+# epsilon_min = 0.03
+# alpha = 0.1
+# gamma = 0.95
+
+[thermo]
+# replicas = 48
+# num_temps = 48
+# steps_per_temp = 5000
+# t_min = 0.001
+# t_max = 10.0
+# replicas_max_safe = 56
+# num_temps_max_safe = 56
+
+[quantum]
+# iterations = 30
+# failure_retries = 2
+# fallback_on_failure = true
+# target_chromatic = 83
+
+[memetic]
+# population_size = 256
+# elite_size = 8
+# generations = 900
+# mutation_rate = 0.05
+# tournament_size = 3
+# local_search_depth = 10000
+# use_tsp_guidance = false
+# tsp_weight = 0.0
+
+[transfer_entropy]
+# geodesic_weight = 0.2
+# te_vs_kuramoto_weight = 0.7
+
+[orchestrator]
+# adp_dsatur_depth = 50000
+# dsatur_target_offset = 3
+# adp_min_history_for_thermo = 2
+# adp_min_history_for_quantum = 5
+# adp_min_history_for_loopback = 3
+# restarts = 10
+
+[neuromorphic]
+# phase_threshold = 0.5
+
+[geodesic]
+# num_landmarks = 16
+# metric = "hop"
+# centrality_weight = 0.5
+# eccentricity_weight = 0.5
